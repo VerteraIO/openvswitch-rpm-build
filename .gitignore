@@ -1,0 +1,16 @@
+# Build artifacts
+/tmp/ovs-build
+*.rpm
+*.rpmbuild
+
+# Local overrides
+*.local
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*~
+
+# Logs
+*.log

@@ -1,0 +1,54 @@
+name: Build OVS RPMs (Rocky 10)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Open vSwitch version (e.g., 3.6.0)"
+        required: false
+        default: "3.6.0"
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'ovs-rpm-builder/**'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'ovs-rpm-builder/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: rockylinux:10
+    defaults:
+      run:
+        shell: bash
+        working-directory: /__w/${{ github.event.repository.name }}/${{ github.event.repository.name }}/ovs-rpm-builder
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show environment
+        run: |
+          cat /etc/os-release || true
+          uname -a
+
+      - name: Install prerequisites and build
+        run: |
+          chmod +x build_ovs_rpm.sh
+          ./build_ovs_rpm.sh "${{ github.event.inputs.version || '3.6.0' }}"
+
+      - name: Locate RPMs
+        id: find
+        run: |
+          echo "out_dir=$HOME/rpmbuild/RPMS" >> $GITHUB_OUTPUT
+          find "$HOME/rpmbuild/RPMS" -type f -name '*.rpm' -maxdepth 3 -print
+
+      - name: Upload RPM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ovs-rpms-${{ github.event.inputs.version || '3.6.0' }}
+          path: |
+            ${{ steps.find.outputs.out_dir }}/**/*.rpm
+          if-no-files-found: error
