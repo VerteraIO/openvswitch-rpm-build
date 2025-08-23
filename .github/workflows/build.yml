@@ -1,4 +1,4 @@
-name: Build OVS RPMs (Rocky 10)
+name: Build OVS RPMs (Multi-Distro)
 
 on:
   workflow_dispatch:
@@ -7,48 +7,173 @@ on:
         description: "Open vSwitch version (e.g., 3.6.0)"
         required: false
         default: "3.6.0"
+      distro:
+        description: "Distribution to build for (rocky, alma, rhel, all)"
+        required: false
+        default: "all"
+      distro_version:
+        description: "Distribution version (9, 10, all)"
+        required: false
+        default: "all"
+  release:
+    types: [published]
   push:
+    tags:
+      - 'v*'
     branches: [ main, master ]
     paths:
-      - 'ovs-rpm-builder/**'
+      - '**'
   pull_request:
     branches: [ main, master ]
     paths:
-      - 'ovs-rpm-builder/**'
+      - '**'
+
+env:
+  # Default version - will be overridden by tags or inputs
+  OVS_VERSION: ${{ github.event.inputs.version || '3.6.0' }}
 
 jobs:
-  build:
+  generate-matrix:
     runs-on: ubuntu-latest
-    container:
-      image: rockylinux:10
-    defaults:
-      run:
-        shell: bash
-        working-directory: /__w/${{ github.event.repository.name }}/${{ github.event.repository.name }}/ovs-rpm-builder
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      build_all: ${{ steps.set-matrix.outputs.build_all }}
+      ovs_version: ${{ steps.set-version.outputs.version }}
+    steps:
+      - name: Set OVS version from tag or input
+        id: set-version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${{ github.ref }}"
+            VERSION="${VERSION#refs/tags/v}"
+            echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${{ github.event.inputs.version || '3.6.0' }}" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Generate build matrix
+        id: set-matrix
+        run: |
+          # For releases/tags, always build all combinations
+          if [[ "${{ github.event_name }}" == "release" ]] || [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "build_all=true" >> $GITHUB_OUTPUT
+            echo 'matrix=[
+              {"distro": "rocky", "version": "9"},
+              {"distro": "rocky", "version": "10"},
+              {"distro": "alma", "version": "9"},
+              {"distro": "alma", "version": "10"},
+              {"distro": "rhel", "version": "9"},
+              {"distro": "rhel", "version": "10"}
+            ]' >> $GITHUB_OUTPUT
+          else
+            # For manual triggers, respect inputs
+            DISTRO="${{ github.event.inputs.distro || 'all' }}"
+            DISTRO_VERSION="${{ github.event.inputs.distro_version || 'all' }}"
+            
+            if [ "$DISTRO" = "all" ] && [ "$DISTRO_VERSION" = "all" ]; then
+              echo "build_all=true" >> $GITHUB_OUTPUT
+              echo 'matrix=[
+                {"distro": "rocky", "version": "9"},
+                {"distro": "rocky", "version": "10"},
+                {"distro": "alma", "version": "9"},
+                {"distro": "alma", "version": "10"},
+                {"distro": "rhel", "version": "9"},
+                {"distro": "rhel", "version": "10"}
+              ]' >> $GITHUB_OUTPUT
+            elif [ "$DISTRO" = "all" ]; then
+              echo "build_all=false" >> $GITHUB_OUTPUT
+              echo "matrix=[
+                {\"distro\": \"rocky\", \"version\": \"$DISTRO_VERSION\"},
+                {\"distro\": \"alma\", \"version\": \"$DISTRO_VERSION\"},
+                {\"distro\": \"rhel\", \"version\": \"$DISTRO_VERSION\"}
+              ]" >> $GITHUB_OUTPUT
+            elif [ "$DISTRO_VERSION" = "all" ]; then
+              echo "build_all=false" >> $GITHUB_OUTPUT
+              echo "matrix=[
+                {\"distro\": \"$DISTRO\", \"version\": \"9\"},
+                {\"distro\": \"$DISTRO\", \"version\": \"10\"}
+              ]" >> $GITHUB_OUTPUT
+            else
+              echo "build_all=false" >> $GITHUB_OUTPUT
+              echo "matrix=[{\"distro\": \"$DISTRO\", \"version\": \"$DISTRO_VERSION\"}]" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+  build:
+    needs: generate-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
+      fail-fast: false
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Show environment
-        run: |
-          cat /etc/os-release || true
-          uname -a
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Install prerequisites and build
+      - name: Build RPMs using Docker
         run: |
-          chmod +x build_ovs_rpm.sh
-          ./build_ovs_rpm.sh "${{ github.event.inputs.version || '3.6.0' }}"
+          make docker-build VERSION="${{ needs.generate-matrix.outputs.ovs_version }}" DISTRO="${{ matrix.distro }}" DISTRO_VERSION="${{ matrix.version }}"
 
       - name: Locate RPMs
         id: find
         run: |
-          echo "out_dir=$HOME/rpmbuild/RPMS" >> $GITHUB_OUTPUT
-          find "$HOME/rpmbuild/RPMS" -type f -name '*.rpm' -maxdepth 3 -print
+          OUTPUT_DIR="out/${{ matrix.distro }}${{ matrix.version }}"
+          echo "out_dir=${OUTPUT_DIR}" >> $GITHUB_OUTPUT
+          if [ -d "${OUTPUT_DIR}" ]; then
+            find "${OUTPUT_DIR}" -type f -name '*.rpm' -print
+          else
+            echo "No output directory found: ${OUTPUT_DIR}"
+            exit 1
+          fi
 
       - name: Upload RPM artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ovs-rpms-${{ github.event.inputs.version || '3.6.0' }}
+          name: ovs-rpms-${{ matrix.distro }}${{ matrix.version }}-${{ needs.generate-matrix.outputs.ovs_version }}
           path: |
             ${{ steps.find.outputs.out_dir }}/**/*.rpm
           if-no-files-found: error
+
+  build-all:
+    needs: generate-matrix  
+    runs-on: ubuntu-latest
+    if: needs.generate-matrix.outputs.build_all == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build all RPMs
+        run: |
+          make build-all VERSION="${{ needs.generate-matrix.outputs.ovs_version }}"
+
+      - name: Upload all RPMs
+        uses: actions/upload-artifact@v4
+        with:
+          name: ovs-rpms-all-${{ needs.generate-matrix.outputs.ovs_version }}
+          path: |
+            out/**/*.rpm
+          if-no-files-found: error
+
+  # Create GitHub release with RPM artifacts for tags
+  release:
+    needs: [generate-matrix, build]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/**/*.rpm
+          generate_release_notes: true
+          draft: false
