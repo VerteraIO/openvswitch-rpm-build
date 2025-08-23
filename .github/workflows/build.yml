@@ -33,13 +33,14 @@ env:
   OVS_VERSION: ${{ github.event.inputs.version || '3.6.0' }}
 
 jobs:
-  generate-matrix:
+  build-el9:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-      build_all: ${{ steps.set-matrix.outputs.build_all }}
       ovs_version: ${{ steps.set-version.outputs.version }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Set OVS version from tag or input
         id: set-version
         run: |
@@ -50,59 +51,24 @@ jobs:
           else
             echo "version=${{ github.event.inputs.version || '3.6.0' }}" >> $GITHUB_OUTPUT
           fi
-      
-      - name: Generate build matrix
-        id: set-matrix
-        run: |
-          # For releases/tags, always build all combinations
-          if [[ "${{ github.event_name }}" == "release" ]] || [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            echo "build_all=true" >> $GITHUB_OUTPUT
-            echo 'matrix=[{"distro":"rocky","version":"9"},{"distro":"rocky","version":"10"},{"distro":"alma","version":"9"},{"distro":"alma","version":"10"},{"distro":"rhel","version":"9"},{"distro":"rhel","version":"10"}]' >> $GITHUB_OUTPUT
-          else
-            # For manual triggers, respect inputs
-            DISTRO="${{ github.event.inputs.distro || 'all' }}"
-            DISTRO_VERSION="${{ github.event.inputs.distro_version || 'all' }}"
-            
-            if [ "$DISTRO" = "all" ] && [ "$DISTRO_VERSION" = "all" ]; then
-              echo "build_all=true" >> $GITHUB_OUTPUT
-              echo 'matrix=[{"distro":"rocky","version":"9"},{"distro":"rocky","version":"10"},{"distro":"alma","version":"9"},{"distro":"alma","version":"10"},{"distro":"rhel","version":"9"},{"distro":"rhel","version":"10"}]' >> $GITHUB_OUTPUT
-            elif [ "$DISTRO" = "all" ]; then
-              echo "build_all=false" >> $GITHUB_OUTPUT
-              echo "matrix=[{\"distro\":\"rocky\",\"version\":\"$DISTRO_VERSION\"},{\"distro\":\"alma\",\"version\":\"$DISTRO_VERSION\"},{\"distro\":\"rhel\",\"version\":\"$DISTRO_VERSION\"}]" >> $GITHUB_OUTPUT
-            elif [ "$DISTRO_VERSION" = "all" ]; then
-              echo "build_all=false" >> $GITHUB_OUTPUT
-              echo "matrix=[{\"distro\":\"$DISTRO\",\"version\":\"9\"},{\"distro\":\"$DISTRO\",\"version\":\"10\"}]" >> $GITHUB_OUTPUT
-            else
-              echo "build_all=false" >> $GITHUB_OUTPUT
-              echo "matrix=[{\"distro\":\"$DISTRO\",\"version\":\"$DISTRO_VERSION\"}]" >> $GITHUB_OUTPUT
-            fi
-          fi
-
-  build:
-    needs: generate-matrix
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
-      fail-fast: false
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Build RPMs using Docker
         run: |
-          make docker-build VERSION="${{ needs.generate-matrix.outputs.ovs_version }}" DISTRO="${{ matrix.distro }}" DISTRO_VERSION="${{ matrix.version }}"
+          make docker-build VERSION="${{ steps.set-version.outputs.version }}" DISTRO="rocky" DISTRO_VERSION="9"
 
-      - name: Locate RPMs
+      - name: Locate and prepare RPMs
         id: find
         run: |
-          OUTPUT_DIR="out/${{ matrix.distro }}${{ matrix.version }}"
-          echo "out_dir=${OUTPUT_DIR}" >> $GITHUB_OUTPUT
+          OUTPUT_DIR="out/rocky9"
           if [ -d "${OUTPUT_DIR}" ]; then
             find "${OUTPUT_DIR}" -type f -name '*.rpm' -print
+            # Copy RPMs to a flat directory for artifact upload
+            mkdir -p rpm-artifacts-el9
+            cp "${OUTPUT_DIR}"/*.rpm rpm-artifacts-el9/ 2>/dev/null || true
+            echo "rpm_dir=rpm-artifacts-el9" >> $GITHUB_OUTPUT
           else
             echo "No output directory found: ${OUTPUT_DIR}"
             exit 1
@@ -111,39 +77,64 @@ jobs:
       - name: Upload RPM artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ovs-rpms-${{ matrix.distro }}${{ matrix.version }}-${{ needs.generate-matrix.outputs.ovs_version }}
-          path: |
-            ${{ steps.find.outputs.out_dir }}/**/*.rpm
+          name: ovs-rpms-el9-${{ steps.set-version.outputs.version }}
+          path: ${{ steps.find.outputs.rpm_dir }}/*.rpm
           if-no-files-found: error
 
-  build-all:
-    needs: generate-matrix  
+  build-el10:
     runs-on: ubuntu-latest
-    if: needs.generate-matrix.outputs.build_all == 'true'
+    outputs:
+      ovs_version: ${{ steps.set-version.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set OVS version from tag or input
+        id: set-version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${{ github.ref }}"
+            VERSION="${VERSION#refs/tags/v}"
+            echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${{ github.event.inputs.version || '3.6.0' }}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build all RPMs
+      - name: Build RPMs using Docker
         run: |
-          make build-all VERSION="${{ needs.generate-matrix.outputs.ovs_version }}"
+          make docker-build VERSION="${{ steps.set-version.outputs.version }}" DISTRO="rocky" DISTRO_VERSION="10"
 
-      - name: Upload all RPMs
+      - name: Locate and prepare RPMs
+        id: find
+        run: |
+          OUTPUT_DIR="out/rocky10"
+          if [ -d "${OUTPUT_DIR}" ]; then
+            find "${OUTPUT_DIR}" -type f -name '*.rpm' -print
+            # Copy RPMs to a flat directory for artifact upload
+            mkdir -p rpm-artifacts-el10
+            cp "${OUTPUT_DIR}"/*.rpm rpm-artifacts-el10/ 2>/dev/null || true
+            echo "rpm_dir=rpm-artifacts-el10" >> $GITHUB_OUTPUT
+          else
+            echo "No output directory found: ${OUTPUT_DIR}"
+            exit 1
+          fi
+
+      - name: Upload RPM artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ovs-rpms-all-${{ needs.generate-matrix.outputs.ovs_version }}
-          path: |
-            out/**/*.rpm
+          name: ovs-rpms-el10-${{ steps.set-version.outputs.version }}
+          path: ${{ steps.find.outputs.rpm_dir }}/*.rpm
           if-no-files-found: error
+
 
   # Create GitHub release with RPM artifacts for tags
   release:
-    needs: [generate-matrix, build]
+    needs: [build-el9, build-el10]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4

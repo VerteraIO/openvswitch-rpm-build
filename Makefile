@@ -70,7 +70,8 @@ docker-build: docker-image
 	  $(IMAGE) bash -lc " \
 	    set -e && \
 	    dnf install -y dnf-plugins-core epel-release && \
-	    (crb enable || dnf config-manager --set-enabled crb || true) && \
+	    (crb enable || dnf config-manager --set-enabled crb || dnf config-manager --set-enabled powertools || true) && \
+	    dnf clean metadata && \
 	    dnf groupinstall -y \"Development Tools\" && \
 	    dnf install -y rpm-build rpmdevtools python3-netaddr python3-pyparsing && \
 	    rpmdev-setuptree && \
