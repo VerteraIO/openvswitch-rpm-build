@@ -57,14 +57,7 @@ jobs:
           # For releases/tags, always build all combinations
           if [[ "${{ github.event_name }}" == "release" ]] || [[ "${{ github.ref }}" == refs/tags/* ]]; then
             echo "build_all=true" >> $GITHUB_OUTPUT
-            echo 'matrix=[
-              {"distro": "rocky", "version": "9"},
-              {"distro": "rocky", "version": "10"},
-              {"distro": "alma", "version": "9"},
-              {"distro": "alma", "version": "10"},
-              {"distro": "rhel", "version": "9"},
-              {"distro": "rhel", "version": "10"}
-            ]' >> $GITHUB_OUTPUT
+            echo 'matrix=[{"distro":"rocky","version":"9"},{"distro":"rocky","version":"10"},{"distro":"alma","version":"9"},{"distro":"alma","version":"10"},{"distro":"rhel","version":"9"},{"distro":"rhel","version":"10"}]' >> $GITHUB_OUTPUT
           else
             # For manual triggers, respect inputs
             DISTRO="${{ github.event.inputs.distro || 'all' }}"
@@ -72,30 +65,16 @@ jobs:
             
             if [ "$DISTRO" = "all" ] && [ "$DISTRO_VERSION" = "all" ]; then
               echo "build_all=true" >> $GITHUB_OUTPUT
-              echo 'matrix=[
-                {"distro": "rocky", "version": "9"},
-                {"distro": "rocky", "version": "10"},
-                {"distro": "alma", "version": "9"},
-                {"distro": "alma", "version": "10"},
-                {"distro": "rhel", "version": "9"},
-                {"distro": "rhel", "version": "10"}
-              ]' >> $GITHUB_OUTPUT
+              echo 'matrix=[{"distro":"rocky","version":"9"},{"distro":"rocky","version":"10"},{"distro":"alma","version":"9"},{"distro":"alma","version":"10"},{"distro":"rhel","version":"9"},{"distro":"rhel","version":"10"}]' >> $GITHUB_OUTPUT
             elif [ "$DISTRO" = "all" ]; then
               echo "build_all=false" >> $GITHUB_OUTPUT
-              echo "matrix=[
-                {\"distro\": \"rocky\", \"version\": \"$DISTRO_VERSION\"},
-                {\"distro\": \"alma\", \"version\": \"$DISTRO_VERSION\"},
-                {\"distro\": \"rhel\", \"version\": \"$DISTRO_VERSION\"}
-              ]" >> $GITHUB_OUTPUT
+              echo "matrix=[{\"distro\":\"rocky\",\"version\":\"$DISTRO_VERSION\"},{\"distro\":\"alma\",\"version\":\"$DISTRO_VERSION\"},{\"distro\":\"rhel\",\"version\":\"$DISTRO_VERSION\"}]" >> $GITHUB_OUTPUT
             elif [ "$DISTRO_VERSION" = "all" ]; then
               echo "build_all=false" >> $GITHUB_OUTPUT
-              echo "matrix=[
-                {\"distro\": \"$DISTRO\", \"version\": \"9\"},
-                {\"distro\": \"$DISTRO\", \"version\": \"10\"}
-              ]" >> $GITHUB_OUTPUT
+              echo "matrix=[{\"distro\":\"$DISTRO\",\"version\":\"9\"},{\"distro\":\"$DISTRO\",\"version\":\"10\"}]" >> $GITHUB_OUTPUT
             else
               echo "build_all=false" >> $GITHUB_OUTPUT
-              echo "matrix=[{\"distro\": \"$DISTRO\", \"version\": \"$DISTRO_VERSION\"}]" >> $GITHUB_OUTPUT
+              echo "matrix=[{\"distro\":\"$DISTRO\",\"version\":\"$DISTRO_VERSION\"}]" >> $GITHUB_OUTPUT
             fi
           fi
 
