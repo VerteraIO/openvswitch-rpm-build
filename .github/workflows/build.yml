@@ -28,6 +28,10 @@ on:
     paths:
       - '**'
 
+permissions:
+  contents: write
+  actions: read
+
 env:
   # Default version - will be overridden by tags or inputs
   OVS_VERSION: ${{ github.event.inputs.version || '3.6.0' }}
