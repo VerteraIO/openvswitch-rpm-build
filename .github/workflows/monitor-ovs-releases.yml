@@ -1,0 +1,61 @@
+name: Monitor OVS Releases
+
+on:
+  schedule:
+    # Check for new OVS releases every 6 hours
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    # Allow manual triggering for testing
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  check-releases:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get latest OVS release
+        id: ovs-release
+        run: |
+          # Get the latest release from OVS repository
+          LATEST=$(curl -s https://api.github.com/repos/openvswitch/ovs/releases/latest | jq -r '.tag_name')
+          echo "latest_version=${LATEST#v}" >> $GITHUB_OUTPUT
+          echo "Latest OVS version: ${LATEST#v}"
+
+      - name: Check if already built
+        id: check-built
+        run: |
+          VERSION="${{ steps.ovs-release.outputs.latest_version }}"
+          
+          # Check if we already have a release for this version
+          if gh release view "v${VERSION}" >/dev/null 2>&1; then
+            echo "already_built=true" >> $GITHUB_OUTPUT
+            echo "Version ${VERSION} already built"
+          else
+            echo "already_built=false" >> $GITHUB_OUTPUT
+            echo "Version ${VERSION} needs to be built"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Trigger build workflow
+        if: steps.check-built.outputs.already_built == 'false'
+        run: |
+          VERSION="${{ steps.ovs-release.outputs.latest_version }}"
+          echo "Triggering build for OVS version ${VERSION}"
+          
+          # Trigger the build workflow via repository dispatch
+          curl -X POST \
+            -H "Authorization: token ${{ github.token }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/${{ github.repository }}/dispatches \
+            -d "{\"event_type\":\"ovs-release\",\"client_payload\":{\"version\":\"${VERSION}\"}}"
+
+      - name: No build needed
+        if: steps.check-built.outputs.already_built == 'true'
+        run: |
+          echo "OVS version ${{ steps.ovs-release.outputs.latest_version }} already built - skipping"
