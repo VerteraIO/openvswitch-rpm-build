@@ -18,13 +18,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Get latest OVS release
+      - name: Get latest OVS tag
         id: ovs-release
         run: |
-          # Get the latest release from OVS repository
-          LATEST=$(curl -s https://api.github.com/repos/openvswitch/ovs/releases/latest | jq -r '.tag_name')
-          echo "latest_version=${LATEST#v}" >> $GITHUB_OUTPUT
-          echo "Latest OVS version: ${LATEST#v}"
+          # Get the latest tag from OVS repository (OVS uses tags, not releases)
+          echo "Fetching latest OVS tag..."
+          LATEST=$(curl -s https://api.github.com/repos/openvswitch/ovs/tags | jq -r '.[0].name // empty')
+          
+          if [ -z "$LATEST" ] || [ "$LATEST" = "null" ]; then
+            echo "ERROR: Could not determine latest OVS tag"
+            exit 1
+          fi
+          
+          VERSION=${LATEST#v}
+          echo "latest_version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Latest OVS version: ${VERSION}"
 
       - name: Check if already built
         id: check-built
