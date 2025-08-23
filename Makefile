@@ -65,8 +65,8 @@ docker-image:
 	docker build --build-arg DISTRO=$(DISTRO) --build-arg DISTRO_VERSION=$(DISTRO_VERSION) -t $(IMAGE) .
 
 docker-build: docker-image
-	mkdir -p $(OUT_DIR)
-	docker run --rm -v $(PWD)/$(OUT_DIR):/root/rpmbuild/RPMS \
+	mkdir -p $(OUT_DIR)/$(DISTRO)$(DISTRO_VERSION)
+	docker run --rm -v $(PWD)/$(OUT_DIR)/$(DISTRO)$(DISTRO_VERSION):/root/rpmbuild/RPMS \
 	  $(IMAGE) bash -lc " \
 	    set -e && \
 	    dnf install -y dnf-plugins-core epel-release && \
@@ -81,17 +81,14 @@ docker-build: docker-image
 	    rpmbuild -bb --nocheck /root/rpmbuild/SOURCES/openvswitch-$(VERSION)/rhel/openvswitch-fedora.spec && \
 	    cp -v /root/rpmbuild/RPMS/*/*.rpm /root/rpmbuild/RPMS \
 	  "
-	@echo "RPMs available under ./$(OUT_DIR)"
+	@echo "RPMs available under ./$(OUT_DIR)/$(DISTRO)$(DISTRO_VERSION)"
 
 build-all: clean
 	@echo "Building OVS $(VERSION) for all supported distributions..."
 	@for distro in rocky alma rhel; do \
 		for version in 9 10; do \
 			echo "Building for $$distro $$version..."; \
-			mkdir -p $(OUT_DIR)/$$distro$$version; \
 			if make docker-build DISTRO=$$distro DISTRO_VERSION=$$version; then \
-				mv $(OUT_DIR)/*.rpm $(OUT_DIR)/$$distro$$version/ 2>/dev/null || true; \
-				mv $(OUT_DIR)/*/*.rpm $(OUT_DIR)/$$distro$$version/ 2>/dev/null || true; \
 				echo "✓ $$distro $$version build complete"; \
 			else \
 				echo "✗ $$distro $$version build failed"; \
