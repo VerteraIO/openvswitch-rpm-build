@@ -20,10 +20,30 @@ OUT_DIR = out
 BUILD_DIR = build
 RPM_DIR = $(BUILD_DIR)/rpms
 
+# Detect container engine: prefer Podman, fallback to Docker
+ENGINE ?= $(shell if command -v podman >/dev/null 2>&1; then echo podman; \
+                  elif command -v docker >/dev/null 2>&1; then echo docker; \
+                  else echo docker; fi)
+
+# Podman on SELinux hosts typically requires :Z on volume mounts
+ifeq ($(ENGINE),podman)
+  VOLUME_SELINUX := :Z
+else
+  VOLUME_SELINUX :=
+endif
+
 .PHONY: build deps src rpm docker-image docker-build build-all clean
 
 # Compute SUDO dynamically
 SUDO := $(shell [ "$$(id -u)" -eq 0 ] && echo "" || echo "sudo")
+
+# AF_XDP toggle: default enabled. Set AFXDP=0 to disable passing '--with afxdp'.
+AFXDP ?= 1
+ifeq ($(AFXDP),1)
+  RPMBUILD_AFXDP := --with afxdp
+else
+  RPMBUILD_AFXDP :=
+endif
 
 build: deps src rpm
 	@echo "RPMs available under $(RPM_DIR)"
@@ -41,7 +61,9 @@ deps:
 	  checkpolicy libpcap-devel libcmocka-devel \
 	  unbound-devel libunwind-devel \
 	  redhat-rpm-config elfutils-libelf-devel \
-	  autoconf automake pkgconfig wget
+	  autoconf automake pkgconfig wget \
+	  # AF_XDP dependencies
+	  libbpf-devel libxdp-devel numactl-devel
 
 src:
 	mkdir -p $(BUILD_DIR)
@@ -56,17 +78,17 @@ rpm:
 	  make dist; \
 	  cp openvswitch-$(VERSION).tar.gz $(HOME)/rpmbuild/SOURCES/; \
 	  sed -e '/^%package devel/,/^%package selinux-policy/{ /^%package selinux-policy/!d; }' -e '/^%files devel/,/^%files selinux-policy/{ /^%files selinux-policy/!d; }' -e '/rm -rf.*usr\/include/a\\rm -f $$RPM_BUILD_ROOT/usr/lib*/lib*.so $$RPM_BUILD_ROOT/usr/lib*/lib*.a $$RPM_BUILD_ROOT/usr/lib*/pkgconfig/lib*.pc\nrm -rf $$RPM_BUILD_ROOT/usr/share/openvswitch/scripts/usdt/' rhel/openvswitch.spec > $(HOME)/rpmbuild/SPECS/openvswitch.spec; \
-	  rpmbuild -bb --without check --define "_without_devel 1" --define "_topdir $(HOME)/rpmbuild" $(HOME)/rpmbuild/SPECS/openvswitch.spec; \
+	  rpmbuild -bb --without check $(RPMBUILD_AFXDP) --define "_without_devel 1" --define "_topdir $(HOME)/rpmbuild" $(HOME)/rpmbuild/SPECS/openvswitch.spec; \
 	}
 	mkdir -p $(RPM_DIR)
 	cp -v $(HOME)/rpmbuild/RPMS/*/*.rpm $(RPM_DIR)
 
 docker-image:
-	docker build --build-arg DISTRO=$(DISTRO) --build-arg DISTRO_VERSION=$(DISTRO_VERSION) -t $(IMAGE) .
+	$(ENGINE) build --build-arg DISTRO=$(DISTRO) --build-arg DISTRO_VERSION=$(DISTRO_VERSION) -t $(IMAGE) .
 
 docker-build: docker-image
 	mkdir -p $(OUT_DIR)/$(DISTRO)$(DISTRO_VERSION)
-	docker run --rm -v $(PWD)/$(OUT_DIR)/$(DISTRO)$(DISTRO_VERSION):/root/rpmbuild/RPMS \
+	$(ENGINE) run --rm -v $(PWD)/$(OUT_DIR)/$(DISTRO)$(DISTRO_VERSION):/root/rpmbuild/RPMS$(VOLUME_SELINUX) \
 	  $(IMAGE) bash -lc " \
 	    set -e && \
 	    dnf install -y dnf-plugins-core epel-release && \
@@ -79,7 +101,7 @@ docker-build: docker-image
 	    cd /root/rpmbuild/SOURCES && \
 	    tar -zxf openvswitch-$(VERSION).tar.gz && \
 	    dnf builddep -y openvswitch-$(VERSION)/rhel/openvswitch-fedora.spec && \
-	    rpmbuild -bb --nocheck /root/rpmbuild/SOURCES/openvswitch-$(VERSION)/rhel/openvswitch-fedora.spec && \
+	    rpmbuild -bb --nocheck $(RPMBUILD_AFXDP) /root/rpmbuild/SOURCES/openvswitch-$(VERSION)/rhel/openvswitch-fedora.spec && \
 	    cp -v /root/rpmbuild/RPMS/*/*.rpm /root/rpmbuild/RPMS \
 	  "
 	@echo "RPMs available under ./$(OUT_DIR)/$(DISTRO)$(DISTRO_VERSION)"

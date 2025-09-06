@@ -29,6 +29,8 @@ RUN dnf install -y dnf-plugins-core epel-release \
     elfutils-libelf-devel \
     autoconf automake pkgconfig \
     wget \
+    # AF_XDP dependencies
+    libbpf-devel libxdp-devel numactl-devel \
     && dnf clean all
 
 # Create build directory
